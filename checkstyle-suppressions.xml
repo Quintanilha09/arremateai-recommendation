@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+        "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+        "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<!--
+    Suprime Checkstyle em código gerado e testes auto-gerados.
+    Arquivos manuais em src/test/java continuam sendo validados.
+-->
+<suppressions>
+    <!-- Código gerado por anotações (MapStruct, QueryDSL, etc.) -->
+    <suppress files="[\\/]target[\\/]generated-sources[\\/]" checks=".*"/>
+    <suppress files="[\\/]target[\\/]generated-test-sources[\\/]" checks=".*"/>
+
+    <!-- Classe gerada pelo Spring Boot Starter -->
+    <suppress files=".*Application\.java" checks="HideUtilityClassConstructor"/>
+</suppressions>
