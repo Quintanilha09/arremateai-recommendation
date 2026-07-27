@@ -101,6 +101,35 @@ class RecomendacaoIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("para-voce: mesmo quando a vitrine devolve os candidatos em ordem 100% dominada por uma "
+            + "categoria, a resposta final deve refletir o balanceamento do DiversidadeReRanker (E30-H4, "
+            + "fluxo real com o bean do Spring, sem mock do re-ranker)")
+    void paraVoceDeveDiversificarResultadoDoColdStart() {
+        UUID userId = UUID.randomUUID();
+        UUID[] imoveis = {UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()};
+        UUID[] veiculos = {UUID.randomUUID(), UUID.randomUUID()};
+
+        StringBuilder content = new StringBuilder("[");
+        for (UUID id : imoveis) {
+            content.append(loteJson(id, "IMOVEL")).append(",");
+        }
+        content.append(loteJson(veiculos[0], "VEICULO")).append(",").append(loteJson(veiculos[1], "VEICULO"));
+        content.append("]");
+
+        mockCatalog.expect(requestTo(startsWith(CATALOG_BASE_URL + "/api/lotes/vitrine")))
+                .andRespond(withSuccess(content.toString(), MediaType.APPLICATION_JSON));
+
+        ResponseEntity<String> resposta = restTemplate.exchange(
+                "/api/recomendacoes/para-voce?limite=6", HttpMethod.GET,
+                new HttpEntity<>(montarHeaders(userId.toString())), String.class);
+
+        assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resposta.getBody()).contains(veiculos[0].toString());
+        assertThat(resposta.getBody()).contains(veiculos[1].toString());
+    }
+
+    @Test
     @DisplayName("para-voce: usuário com perfil implícito deve receber busca personalizada excluindo o já visto")
     void paraVoceDeveExcluirLoteJaVistoParaUsuarioComPerfil() {
         UUID userId = UUID.randomUUID();
@@ -113,6 +142,12 @@ class RecomendacaoIT extends AbstractIntegrationTest {
                 .andRespond(withSuccess(loteJson(loteVisto, "IMOVEL"), MediaType.APPLICATION_JSON));
         mockCatalog.expect(requestTo(startsWith(CATALOG_BASE_URL + "/api/lotes?")))
                 .andRespond(withSuccess(paginaComContent(loteVisto, loteRecomendado), MediaType.APPLICATION_JSON));
+        // E30-H4: o pool de candidatos e buscado com folga (2x o limite) para dar espaco ao
+        // DiversidadeReRanker, entao o top-up de vitrine e acionado mesmo a busca personalizada
+        // sozinha ja cobrindo o limite pedido (1) — devolve vazio pra manter o cenario deste
+        // teste focado unicamente na exclusao do lote ja visto.
+        mockCatalog.expect(requestTo(startsWith(CATALOG_BASE_URL + "/api/lotes/vitrine")))
+                .andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
 
         ResponseEntity<String> resposta = restTemplate.exchange(
                 "/api/recomendacoes/para-voce?limite=1", HttpMethod.GET,

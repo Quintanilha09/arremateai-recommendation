@@ -24,10 +24,13 @@ import java.util.stream.IntStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,12 +46,22 @@ class RecomendacaoServiceTest {
     @Mock
     private EventoComportamentoRepository eventoComportamentoRepository;
 
+    @Mock
+    private DiversidadeReRanker diversidadeReRanker;
+
     private RecomendacaoService service;
     private final UUID userId = UUID.randomUUID();
 
     @BeforeEach
     void prepararCenario() {
-        service = new RecomendacaoService(perfilImplicitoService, propertyCatalogClient, eventoComportamentoRepository);
+        service = new RecomendacaoService(
+                perfilImplicitoService, propertyCatalogClient, eventoComportamentoRepository, diversidadeReRanker);
+        // Passe-através por padrão: os testes desta classe cobrem a montagem da lista de
+        // candidatos (busca personalizada / top-up de vitrine), não a lógica de diversidade
+        // em si — essa é coberta isoladamente em DiversidadeReRankerTest. lenient() porque
+        // testes de "vistos-recentemente" não chamam paraVoce, logo não usam este stub.
+        lenient().when(diversidadeReRanker.reordenar(anyList(), anyInt()))
+                .thenAnswer(invocacao -> invocacao.getArgument(0));
     }
 
     @Test
@@ -70,7 +83,7 @@ class RecomendacaoServiceTest {
         UUID loteVisto = UUID.randomUUID();
         LoteCatalogo candidatoValido = lote("IMOVEL", BigDecimal.valueOf(150_000));
         LoteCatalogo candidatoJaVisto = new LoteCatalogo(loteVisto, "IMOVEL", "sub", "titulo",
-                BigDecimal.valueOf(150_000), null, "SP", "cidade", null, "ATIVO", false, null);
+                BigDecimal.valueOf(150_000), null, "SP", "cidade", null, "ATIVO", false, null, null);
 
         PerfilImplicitoUsuario perfil = new PerfilImplicitoUsuario("IMOVEL", "SP",
                 BigDecimal.valueOf(80_000), BigDecimal.valueOf(240_000), List.of(loteVisto));
@@ -83,7 +96,6 @@ class RecomendacaoServiceTest {
         assertThat(resultado).hasSize(1);
         assertThat(resultado.get(0).id()).isEqualTo(candidatoValido.id());
         assertThat(resultado.get(0).id()).isNotEqualTo(loteVisto);
-        verify(propertyCatalogClient, never()).vitrine(anyInt());
     }
 
     @Test
@@ -114,7 +126,7 @@ class RecomendacaoServiceTest {
         UUID loteVisto = UUID.randomUUID();
         LoteCatalogo doVitrine = lote("VEICULO", BigDecimal.valueOf(50_000));
         LoteCatalogo mesmoLoteJaVistoNaVitrine = new LoteCatalogo(loteVisto, "AGRONEGOCIO", "sub", "titulo",
-                BigDecimal.valueOf(80_000), null, "MT", "cidade", null, "ATIVO", false, null);
+                BigDecimal.valueOf(80_000), null, "MT", "cidade", null, "ATIVO", false, null, null);
 
         PerfilImplicitoUsuario perfil = new PerfilImplicitoUsuario("AGRONEGOCIO", "MT",
                 BigDecimal.valueOf(70_000), BigDecimal.valueOf(90_000), List.of(loteVisto));
@@ -131,42 +143,106 @@ class RecomendacaoServiceTest {
     }
 
     @Test
-    @DisplayName("Não deve chamar vitrine quando a busca personalizada já preenche o limite")
-    void naoDeveChamarVitrineQuandoPersonalizadoSuficiente() {
-        List<LoteCatalogo> doze = IntStream.range(0, 12)
+    @DisplayName("Deve parar de completar com vitrine assim que o pool atingir o tamanho necessário, "
+            + "ignorando itens excedentes devolvidos pela vitrine (evita pool maior que o esperado)")
+    void deveIgnorarItensExcedentesDaVitrineAoAtingirTamanhoDoPool() {
+        LoteCatalogo doVitrine1 = lote("IMOVEL", BigDecimal.valueOf(100_000));
+        LoteCatalogo doVitrine2 = lote("VEICULO", BigDecimal.valueOf(50_000));
+        LoteCatalogo excedente = lote("ELETRONICO", BigDecimal.valueOf(2_000));
+        when(perfilImplicitoService.construir(userId)).thenReturn(PerfilImplicitoUsuario.vazio());
+        when(propertyCatalogClient.vitrine(anyInt())).thenReturn(List.of(doVitrine1, doVitrine2, excedente));
+
+        List<LoteRecomendadoResponse> resultado = service.paraVoce(userId, 1);
+
+        assertThat(resultado).extracting(LoteRecomendadoResponse::id)
+                .containsExactlyInAnyOrder(doVitrine1.id(), doVitrine2.id())
+                .doesNotContain(excedente.id());
+    }
+
+    @Test
+    @DisplayName("Não deve chamar vitrine quando a busca personalizada sozinha já preenche o pool de "
+            + "candidatos com folga (E30-H4: overfetch de " + "2x o limite, ver FATOR_SOBRECARGA_POOL)")
+    void naoDeveChamarVitrineQuandoPersonalizadoPreencheOPoolComFolga() {
+        List<LoteCatalogo> vinteEQuatro = IntStream.range(0, 24)
                 .mapToObj(i -> lote("IMOVEL", BigDecimal.valueOf(100_000)))
                 .toList();
         PerfilImplicitoUsuario perfil = new PerfilImplicitoUsuario("IMOVEL", "SP",
                 BigDecimal.valueOf(80_000), BigDecimal.valueOf(240_000), List.of());
         when(perfilImplicitoService.construir(userId)).thenReturn(perfil);
-        when(propertyCatalogClient.listar(any(), any(), any(), any(), any(), anyInt())).thenReturn(doze);
+        when(propertyCatalogClient.listar(any(), any(), any(), any(), any(), anyInt())).thenReturn(vinteEQuatro);
 
-        List<LoteRecomendadoResponse> resultado = service.paraVoce(userId, 12);
+        service.paraVoce(userId, 12);
 
-        assertThat(resultado).hasSize(12);
         verify(propertyCatalogClient, never()).vitrine(anyInt());
     }
 
     @Test
-    @DisplayName("Deve normalizar limite não positivo para o padrão (12)")
+    @DisplayName("Deve normalizar limite não positivo para o padrão (12) e buscar o pool de candidatos "
+            + "com folga (E30-H4: 2x o limite efetivo)")
     void deveNormalizarLimiteNaoPositivo() {
         when(perfilImplicitoService.construir(userId)).thenReturn(PerfilImplicitoUsuario.vazio());
         when(propertyCatalogClient.vitrine(anyInt())).thenReturn(List.of());
 
         service.paraVoce(userId, 0);
 
-        verify(propertyCatalogClient).vitrine(12);
+        verify(propertyCatalogClient).vitrine(24);
     }
 
     @Test
-    @DisplayName("Deve limitar o limite máximo pedido a 50")
+    @DisplayName("Deve limitar o limite máximo pedido a 50 e buscar o pool de candidatos "
+            + "com folga (E30-H4: 2x o limite efetivo)")
     void deveLimitarLimiteMaximo() {
         when(perfilImplicitoService.construir(userId)).thenReturn(PerfilImplicitoUsuario.vazio());
         when(propertyCatalogClient.vitrine(anyInt())).thenReturn(List.of());
 
         service.paraVoce(userId, 999);
 
-        verify(propertyCatalogClient).vitrine(50);
+        verify(propertyCatalogClient).vitrine(100);
+    }
+
+    @Test
+    @DisplayName("Deve acionar o DiversidadeReRanker com os candidatos montados e o limite efetivo (E30-H4)")
+    void deveAcionarDiversidadeReRankerComCandidatosELimite() {
+        LoteCatalogo doVitrine1 = lote("IMOVEL", BigDecimal.valueOf(100_000));
+        LoteCatalogo doVitrine2 = lote("VEICULO", BigDecimal.valueOf(50_000));
+        when(perfilImplicitoService.construir(userId)).thenReturn(PerfilImplicitoUsuario.vazio());
+        when(propertyCatalogClient.vitrine(anyInt())).thenReturn(List.of(doVitrine1, doVitrine2));
+
+        service.paraVoce(userId, 5);
+
+        verify(diversidadeReRanker).reordenar(List.of(doVitrine1, doVitrine2), 5);
+    }
+
+    @Test
+    @DisplayName("A resposta final deve refletir a ordem/seleção devolvida pelo DiversidadeReRanker, "
+            + "não a ordem bruta dos candidatos (E30-H4)")
+    void deveUsarResultadoDoReRankerNaRespostaFinal() {
+        LoteCatalogo maisRelevante = lote("IMOVEL", BigDecimal.valueOf(100_000));
+        LoteCatalogo menosRelevante = lote("VEICULO", BigDecimal.valueOf(50_000));
+        when(perfilImplicitoService.construir(userId)).thenReturn(PerfilImplicitoUsuario.vazio());
+        when(propertyCatalogClient.vitrine(anyInt())).thenReturn(List.of(maisRelevante, menosRelevante));
+        when(diversidadeReRanker.reordenar(anyList(), anyInt()))
+                .thenReturn(List.of(menosRelevante));
+
+        List<LoteRecomendadoResponse> resultado = service.paraVoce(userId, 5);
+
+        assertThat(resultado).extracting(LoteRecomendadoResponse::id).containsExactly(menosRelevante.id());
+    }
+
+    @Test
+    @DisplayName("Vistos recentemente: NÃO deve acionar o DiversidadeReRanker — decisão intencional e "
+            + "documentada (ver javadoc de RecomendacaoService#vistosRecentemente, E30-H4): a lista "
+            + "reflete o histórico real de navegação do usuário e reordená-la por diversidade mudaria "
+            + "o significado de \"você viu\"; este teste evita regressão silenciosa dessa decisão")
+    void naoDeveAcionarDiversidadeReRankerEmVistosRecentemente() {
+        UUID loteId = UUID.randomUUID();
+        when(eventoComportamentoRepository.findByUserIdAndEventTypeOrderByOccurredAtDesc(
+                eq(userId), eq(TipoEvento.VIEW), any())).thenReturn(List.of(eventoView(loteId, LocalDateTime.now())));
+        when(propertyCatalogClient.buscarPorId(loteId)).thenReturn(Optional.of(lote("IMOVEL", BigDecimal.TEN)));
+
+        service.vistosRecentemente(userId, 12);
+
+        verifyNoInteractions(diversidadeReRanker);
     }
 
     @Test
@@ -239,7 +315,7 @@ class RecomendacaoServiceTest {
         UUID loteId = UUID.randomUUID();
         LoteCatalogo loteComLance = new LoteCatalogo(loteId, "IMOVEL", "sub", "titulo",
                 BigDecimal.valueOf(100_000), BigDecimal.valueOf(120_000), "SP", "cidade",
-                null, "ATIVO", true, new String[]{"foto1.jpg"});
+                null, "ATIVO", true, new String[]{"foto1.jpg"}, null);
         when(eventoComportamentoRepository.findByUserIdAndEventTypeOrderByOccurredAtDesc(
                 eq(userId), eq(TipoEvento.VIEW), any())).thenReturn(List.of(eventoView(loteId, LocalDateTime.now())));
         when(propertyCatalogClient.buscarPorId(loteId)).thenReturn(Optional.of(loteComLance));
@@ -274,6 +350,6 @@ class RecomendacaoServiceTest {
 
     private LoteCatalogo lote(String categoria, BigDecimal valorAvaliacao) {
         return new LoteCatalogo(UUID.randomUUID(), categoria, "sub", "titulo",
-                valorAvaliacao, null, "SP", "cidade", null, "ATIVO", false, null);
+                valorAvaliacao, null, "SP", "cidade", null, "ATIVO", false, null, null);
     }
 }

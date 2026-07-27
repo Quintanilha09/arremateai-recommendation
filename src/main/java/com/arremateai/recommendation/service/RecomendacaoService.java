@@ -38,35 +38,56 @@ public class RecomendacaoService {
     private static final int LIMITE_MAXIMO = 50;
     private static final String STATUS_ATIVO = "ATIVO";
 
+    /**
+     * Fator de sobrecarga do pool de candidatos (E30-H4): busca/completa candidatos ate
+     * {@code limiteEfetivo * FATOR_SOBRECARGA_POOL}, nao apenas ate {@code limiteEfetivo}.
+     * Sem essa folga, o {@link DiversidadeReRanker} recebe um pool do MESMO tamanho do
+     * limite final e nao tem de onde escolher — a truncagem já teria acontecido aqui antes
+     * dele rodar. Com a folga, mesmo quando a busca personalizada (que e filtrada por uma
+     * unica categoria, logo tende a ser homogenea por design) sozinha bastaria para
+     * preencher o limite, ainda assim buscamos o top-up de vitrine para dar ao re-ranker
+     * candidatos de outras categorias/faixas/status para trabalhar.
+     */
+    private static final int FATOR_SOBRECARGA_POOL = 2;
+
     /** Quantos eventos VIEW mais recentes sao varridos para deduplicar "voce viu recentemente". */
     private static final int JANELA_VISTOS_RECENTEMENTE = 100;
 
     private final PerfilImplicitoService perfilImplicitoService;
     private final PropertyCatalogClient propertyCatalogClient;
     private final EventoComportamentoRepository eventoComportamentoRepository;
+    private final DiversidadeReRanker diversidadeReRanker;
 
     /**
      * "Recomendados para voce": busca personalizada pelo perfil implicito, excluindo
      * lotes ja vistos recentemente, completada ("top up") com o mix de vitrine quando
      * insuficiente. Cold-start (usuario sem sinal) cai direto no mix de vitrine — nunca
      * retorna lista vazia enquanto houver ao menos 1 lote no catalogo.
+     *
+     * <p>O pool de candidatos e montado com folga ({@value #FATOR_SOBRECARGA_POOL}x o limite
+     * pedido — ver {@link #FATOR_SOBRECARGA_POOL}) e só então o {@link DiversidadeReRanker}
+     * (E30-H4) reordena e trunca ao limite final, garantindo balanceamento por categoria,
+     * cota de alto valor e mistura de status — aplicado igualmente nos dois caminhos
+     * (personalizado e cold-start) para consistencia: mesmo a vitrine do property-catalog,
+     * que ja tem alguma diversidade por categoria embutida, nao balanceia faixa de preco
+     * nem status.</p>
      */
     @Cacheable(value = CacheConfig.CACHE_PARA_VOCE, key = "#userId + '-' + #limite")
     @Transactional(readOnly = true)
     public List<LoteRecomendadoResponse> paraVoce(UUID userId, int limite) {
         int limiteEfetivo = normalizarLimite(limite);
+        int tamanhoPoolCandidatos = limiteEfetivo * FATOR_SOBRECARGA_POOL;
         PerfilImplicitoUsuario perfil = perfilImplicitoService.construir(userId);
 
         List<LoteCatalogo> candidatos = perfil.temSinalSuficiente()
-                ? buscarPersonalizados(perfil, limiteEfetivo)
+                ? buscarPersonalizados(perfil, tamanhoPoolCandidatos)
                 : new ArrayList<>();
 
-        if (candidatos.size() < limiteEfetivo) {
-            candidatos = completarComVitrine(candidatos, limiteEfetivo, perfil.loteIdsVistosRecentemente());
+        if (candidatos.size() < tamanhoPoolCandidatos) {
+            candidatos = completarComVitrine(candidatos, tamanhoPoolCandidatos, perfil.loteIdsVistosRecentemente());
         }
 
-        return candidatos.stream()
-                .limit(limiteEfetivo)
+        return diversidadeReRanker.reordenar(candidatos, limiteEfetivo).stream()
                 .map(this::mapear)
                 .toList();
     }
@@ -75,6 +96,11 @@ public class RecomendacaoService {
      * "Voce viu recentemente": ultimos VIEW do usuario, deduplicados por loteId
      * (mantendo a ocorrencia mais recente), reidratados no catalogo. Diferente de
      * "para-voce", aqui lista vazia e aceitavel — reflete literalmente o historico.
+     *
+     * <p><strong>Decisao (E30-H4):</strong> o {@link DiversidadeReRanker} NAO e aplicado
+     * aqui de proposito — este endpoint devolve o historico real de navegacao do usuario,
+     * nao uma recomendacao; reordenar/substituir itens artificialmente por diversidade
+     * mudaria o significado do que "voce viu" quer dizer.</p>
      */
     @Cacheable(value = CacheConfig.CACHE_VISTOS_RECENTEMENTE, key = "#userId + '-' + #limite")
     @Transactional(readOnly = true)
