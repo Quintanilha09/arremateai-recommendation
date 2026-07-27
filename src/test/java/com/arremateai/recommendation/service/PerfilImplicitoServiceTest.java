@@ -120,7 +120,7 @@ class PerfilImplicitoServiceTest {
                 eq(userId), eq(TipoEvento.VIEW), any(), any()))
                 .thenReturn(List.of(eventoView(loteId)));
         LoteCatalogo loteComLance = new LoteCatalogo(loteId, "IMOVEL", "apto", "titulo",
-                BigDecimal.valueOf(100_000), BigDecimal.valueOf(150_000), "SP", "SP", null, "ATIVO", false, null);
+                BigDecimal.valueOf(100_000), BigDecimal.valueOf(150_000), "SP", "SP", null, "ATIVO", false, null, null);
         when(propertyCatalogClient.buscarPorId(loteId)).thenReturn(Optional.of(loteComLance));
 
         PerfilImplicitoUsuario perfil = service.construir(userId);
@@ -171,6 +171,6 @@ class PerfilImplicitoServiceTest {
 
     private LoteCatalogo lote(String categoria, String uf, BigDecimal valorAvaliacao) {
         return new LoteCatalogo(UUID.randomUUID(), categoria, "sub", "titulo",
-                valorAvaliacao, null, uf, "cidade", null, "ATIVO", false, null);
+                valorAvaliacao, null, uf, "cidade", null, "ATIVO", false, null, null);
     }
 }

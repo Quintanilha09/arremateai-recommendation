@@ -12,8 +12,12 @@ import java.util.UUID;
  *
  * <p>Propositalmente NAO reexporta o DTO do property-catalog: os servicos sao desacoplados
  * (Database-per-Service / API-per-Service) e este tipo carrega apenas os campos que a
- * recomendacao heuristica realmente usa (E30-H3). {@code ignoreUnknown = true} torna a
+ * recomendacao heuristica realmente usa (E30-H3/E30-H4). {@code ignoreUnknown = true} torna a
  * integracao tolerante a evolucao do contrato do catalogo (novos campos nao quebram o parse).</p>
+ *
+ * @param createdAt data de criacao do lote no catalogo — usado apenas internamente pelo
+ *                   {@link com.arremateai.recommendation.service.DiversidadeReRanker} (E30-H4)
+ *                   para derivar o status efetivo "NOVO"; nao e exposto em {@code LoteRecomendadoResponse}
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record LoteCatalogo(
@@ -28,6 +32,7 @@ public record LoteCatalogo(
         LocalDateTime dataEncerramento,
         String status,
         Boolean destaque,
-        String[] fotosUrls
+        String[] fotosUrls,
+        LocalDateTime createdAt
 ) {
 }
