@@ -53,6 +53,17 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("Deve montar ProblemDetail 401 para UsuarioNaoAutenticadoException")
+    void deveMontarProblema401ParaUsuarioNaoAutenticado() {
+        ProblemDetail problema = handler.handleUsuarioNaoAutenticado(new UsuarioNaoAutenticadoException(), requisicao());
+
+        assertThat(problema.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(problema.getTitle()).isEqualTo("Usuário não autenticado");
+        assertThat(problema.getType().toString()).isEqualTo("urn:arremateai:error:unauthorized");
+        assertThat(problema.getInstance().toString()).isEqualTo(ENDPOINT);
+    }
+
+    @Test
     @DisplayName("Deve montar ProblemDetail 500 para exceção genérica não tratada")
     void deveMontarProblema500ParaExcecaoGenerica() {
         ProblemDetail problema = handler.handleGeneric(new RuntimeException("erro simulado"), requisicao());

@@ -19,6 +19,16 @@ spring:
 app:
   gateway:
     secret: teste-gateway-secret-e30h2
+  cache:
+    recomendacoes:
+      ttl-segundos: 90
+
+# Host inexistente de proposito (E30-H3): os testes de integracao mockam o
+# property-catalog via MockRestServiceServer — se algum teste vazar uma chamada
+# real, ela falha alto e claro em vez de silenciosamente acertar um servico real.
+services:
+  property-catalog:
+    url: http://property-catalog.invalid.test
 
 management:
   endpoints:

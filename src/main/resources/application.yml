@@ -32,6 +32,17 @@ spring:
 app:
   gateway:
     secret: ${GATEWAY_SHARED_SECRET:}
+  # Cache local Caffeine das recomendacoes heuristicas (E30-H3, ADR-009 Fase 1)
+  cache:
+    recomendacoes:
+      ttl-segundos: ${RECOMENDACOES_CACHE_TTL_SEGUNDOS:90}
+
+# Servicos externos consumidos via HTTP (E30-H3): o recommendation nao possui os
+# dados do catalogo de lotes — so os eventos de comportamento — entao a heuristica
+# content-based depende do property-catalog para reidratar categoria/uf/preco/etc.
+services:
+  property-catalog:
+    url: ${PROPERTY_CATALOG_URL:http://localhost:8082}
 
 # Actuator
 management:
