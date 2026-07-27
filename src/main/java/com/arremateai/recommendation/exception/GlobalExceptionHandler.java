@@ -57,6 +57,14 @@ public class GlobalExceptionHandler {
         return problema;
     }
 
+    @ExceptionHandler(UsuarioNaoAutenticadoException.class)
+    public ProblemDetail handleUsuarioNaoAutenticado(UsuarioNaoAutenticadoException ex,
+                                                      HttpServletRequest requisicao) {
+        log.warn("Acesso negado em {}: {}", requisicao.getRequestURI(), ex.getMessage());
+        return construirProblema(HttpStatus.UNAUTHORIZED, "Usuário não autenticado",
+                ex.getMessage(), "unauthorized", requisicao);
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ProblemDetail handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
                                                       HttpServletRequest requisicao) {
