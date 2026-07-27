@@ -26,6 +26,13 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+# Gateway shared secret (ADR-001) — compartilhado com gateway e demais downstream services
+# Comparado contra header X-Gateway-Auth em requisicoes nao-publicas (GatewayAuthFilter, E30-H2)
+# Fail-secure: ausente -> requisicoes retornam 503
+app:
+  gateway:
+    secret: ${GATEWAY_SHARED_SECRET:}
+
 # Actuator
 management:
   endpoints:

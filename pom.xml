@@ -209,7 +209,8 @@
                                         <limit>
                                             <counter>INSTRUCTION</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.80</minimum>
+                                            <!-- E30-H2: criterio de aceite explicito da historia exige >=90% -->
+                                            <minimum>0.90</minimum>
                                         </limit>
                                     </limits>
                                 </rule>
