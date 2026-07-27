@@ -30,6 +30,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -226,6 +227,22 @@ class RecomendacaoServiceTest {
         List<LoteRecomendadoResponse> resultado = service.paraVoce(userId, 5);
 
         assertThat(resultado).extracting(LoteRecomendadoResponse::id).containsExactly(menosRelevante.id());
+    }
+
+    @Test
+    @DisplayName("Vistos recentemente: NÃO deve acionar o DiversidadeReRanker — decisão intencional e "
+            + "documentada (ver javadoc de RecomendacaoService#vistosRecentemente, E30-H4): a lista "
+            + "reflete o histórico real de navegação do usuário e reordená-la por diversidade mudaria "
+            + "o significado de \"você viu\"; este teste evita regressão silenciosa dessa decisão")
+    void naoDeveAcionarDiversidadeReRankerEmVistosRecentemente() {
+        UUID loteId = UUID.randomUUID();
+        when(eventoComportamentoRepository.findByUserIdAndEventTypeOrderByOccurredAtDesc(
+                eq(userId), eq(TipoEvento.VIEW), any())).thenReturn(List.of(eventoView(loteId, LocalDateTime.now())));
+        when(propertyCatalogClient.buscarPorId(loteId)).thenReturn(Optional.of(lote("IMOVEL", BigDecimal.TEN)));
+
+        service.vistosRecentemente(userId, 12);
+
+        verifyNoInteractions(diversidadeReRanker);
     }
 
     @Test
